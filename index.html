@@ -59,7 +59,9 @@
     .card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     .card.playing { box-shadow: 0 0 0 3px var(--accent); }
     .thumbwrap { position: relative; }
-    .badge { position: absolute; left: 8px; bottom: 8px; background: #cc0000; color: #fff; font-size: 12px; font-weight: 700; letter-spacing: .03em; padding: 2px 7px; border-radius: 4px; }
+    .prog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.35); }
+    .prog span { display: block; height: 100%; background: #f00; }
+    .badge { position: absolute; left: 8px; bottom: 10px; background: #cc0000; color: #fff; font-size: 12px; font-weight: 700; letter-spacing: .03em; padding: 2px 7px; border-radius: 4px; }
     #suggest { padding: 0 var(--gap); display: flex; flex-direction: column; gap: 18px; }
     #suggest[hidden] { display: none; }
     #suggest h2 { font-size: 18px; margin: 0 0 8px; letter-spacing: -.01em; }
@@ -127,6 +129,7 @@
     }
 
     function play(video, fromHistory = false) {
+      record();
       if (!fromHistory && hist.list[hist.pos] !== video.id) {
         hist.list = hist.list.slice(0, hist.pos + 1).concat(video.id).slice(-200);
         hist.pos = hist.list.length - 1;
@@ -171,19 +174,108 @@
       }, 1500);
     }
 
+    // Seguir donde lo dejaste (salvo si ya estaba visto o apenas empezado).
+    const startOf = (id) => { const p = prog[id]; return p && !p.done && p.t > 5 ? p.t : 0; };
+
     function load(id) {
       $("unmute").hidden = true;
-      if (yt) { yt.loadVideoById(id); return checkAutoplay(); }
+      if (yt) { yt.loadVideoById({ videoId: id, startSeconds: startOf(id) }); return checkAutoplay(); }
       ytReady.then(() => {
-        if (yt) return yt.loadVideoById(playing.id), checkAutoplay();
+        if (yt) return yt.loadVideoById({ videoId: playing.id, startSeconds: startOf(playing.id) }), checkAutoplay();
         yt = new YT.Player("frame", {
           host: "https://www.youtube-nocookie.com",
           videoId: playing.id,
-          playerVars: { autoplay: 1, rel: 0, playsinline: 1 },
-          events: { onReady: (e) => { e.target.playVideo(); checkAutoplay(); } },
+          playerVars: { autoplay: 1, rel: 0, playsinline: 1, start: startOf(playing.id) },
+          events: {
+            onReady: (e) => { e.target.playVideo(); checkAutoplay(); },
+            onStateChange: (e) => { if (e.data === 0 || e.data === 2) record(); },
+          },
         });
       });
     }
+
+    // Progreso de cada vídeo { t: segundos, d: duración, done, at: cuándo }. Se guarda en el navegador
+    // y, si hay SYNC_URL, se sincroniza cifrado con el Worker de Cloudflare (worker/).
+    const SYNC_URL = "https://mi-canal-sync.pickchannel.workers.dev";
+    const PROG_ITEM = "progress";
+    let prog = (() => { try { return JSON.parse(localStorage.getItem(PROG_ITEM)) || {}; } catch { return {}; } })();
+    function saveProg() {
+      const ids = Object.keys(prog);
+      if (ids.length > 3000) ids.sort((a, b) => prog[a].at - prog[b].at).slice(0, ids.length - 3000).forEach((id) => delete prog[id]);
+      try { localStorage.setItem(PROG_ITEM, JSON.stringify(prog)); } catch {}
+    }
+
+    function setBar(card, p) {
+      let bar = card.querySelector(".prog");
+      if (!p || !p.d) return bar?.remove();
+      if (!bar) { bar = document.createElement("div"); bar.className = "prog"; bar.append(document.createElement("span")); card.querySelector(".thumbwrap").append(bar); }
+      bar.firstChild.style.width = (p.done ? 100 : Math.min(100, (p.t / p.d) * 100)) + "%";
+    }
+    const updateBars = (id) => document.querySelectorAll(".card").forEach((c) => (!id || c.dataset.id === id) && setBar(c, prog[c.dataset.id]));
+
+    let dirty = false;
+    function record() {
+      if (!yt || !playing || !yt.getDuration) return;
+      const t = yt.getCurrentTime(), d = yt.getDuration();
+      if (!d || !t) return;
+      const done = t / d > 0.95;
+      prog[playing.id] = { t: done ? 0 : Math.floor(t), d: Math.round(d), ...(done && { done: 1 }), at: Date.now() };
+      saveProg();
+      dirty = true;
+      updateBars(playing.id);
+    }
+    setInterval(() => { if (yt?.getPlayerState?.() === 1) record(); }, 5000);
+
+    let syncKey = null, syncPath = null;
+    const enc8 = (s) => new TextEncoder().encode(s);
+    const b64 = (buf) => {
+      const u = new Uint8Array(buf); let s = "";
+      for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000));
+      return btoa(s);
+    };
+
+    async function initSync(pass) {
+      if (!SYNC_URL) return;
+      const h = await crypto.subtle.digest("SHA-256", enc8("mi-canal-progress-id:" + pass));
+      syncPath = [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      const base = await crypto.subtle.importKey("raw", enc8(pass), "PBKDF2", false, ["deriveKey"]);
+      syncKey = await crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: enc8("mi-canal-progress"), iterations: 310000 },
+        base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+      await pull();
+      setInterval(() => push(), 120000);
+    }
+
+    async function pull() {
+      if (!syncKey) return;
+      try {
+        const r = await fetch(`${SYNC_URL}/p/${syncPath}`, { cache: "no-store" });
+        const remote = r.ok ? await (async () => {
+          const { iv, data } = await r.json();
+          const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv) }, syncKey, unb64(data));
+          return JSON.parse(new TextDecoder().decode(plain));
+        })() : {};
+        let changed = false;
+        for (const [id, p] of Object.entries(remote)) if (!prog[id] || p.at > prog[id].at) { prog[id] = p; changed = true; }
+        for (const [id, p] of Object.entries(prog)) if (!remote[id] || p.at > remote[id].at) dirty = true;
+        if (changed) { saveProg(); updateBars(); }
+      } catch {}
+    }
+
+    async function push(keepalive = false) {
+      if (!syncKey || !dirty) return;
+      if (!keepalive) await pull();
+      dirty = false;
+      try {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, syncKey, enc8(JSON.stringify(prog)));
+        const r = await fetch(`${SYNC_URL}/p/${syncPath}`, { method: "PUT", keepalive, headers: { "content-type": "application/json" }, body: JSON.stringify({ iv: b64(iv), data: b64(data) }) });
+        if (!r.ok) dirty = true;
+      } catch { dirty = true; }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { record(); push(true); } else pull();
+    });
 
     $("unmute").addEventListener("click", () => { yt?.unMute(); $("unmute").hidden = true; });
 
@@ -212,6 +304,8 @@
     }
 
     $("close").addEventListener("click", () => {
+      record();
+      push();
       yt?.stopVideo();
       $("unmute").hidden = true;
       $("suggest").hidden = true;
@@ -290,6 +384,7 @@
       d.textContent = !v.published ? "" : v.approx ? fmtApprox.format(new Date(v.published)) : fmt.format(new Date(v.published));
       info.append(t, d);
       card.append(wrap, info);
+      setBar(card, prog[v.id]);
       card.addEventListener("click", () => play(v));
       return card;
     }
@@ -352,6 +447,7 @@
         const json = await decrypt(enc, passphrase);
         setSaved(passphrase);
         render(json);
+        initSync(passphrase);
       } catch {
         setSaved(null);
         askPassphrase(enc, true);

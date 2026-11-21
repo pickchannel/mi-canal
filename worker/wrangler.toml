@@ -1,0 +1,7 @@
+name = "mi-canal-sync"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[[kv_namespaces]]
+binding = "PROGRESS"
+id = "a1458032fcc14e8b8cf9e8c3101c19c5"
