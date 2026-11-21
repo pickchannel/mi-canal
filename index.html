@@ -40,10 +40,21 @@
       box-shadow: 0 8px 30px rgba(0,0,0,.25);
     }
     #player[hidden] { display: none; }
-    #player .frame { aspect-ratio: 16 / 9; width: 100%; max-height: 70vh; margin: 0 auto; }
+    #player .frame { position: relative; aspect-ratio: 16 / 9; width: 100%; max-height: 70vh; margin: 0 auto; background: #000; }
+    /* Pantalla completa propia (el botón de YouTube se quita) para poder mostrar ◀ ▶ encima del vídeo. */
+    #player .frame:fullscreen { aspect-ratio: auto; max-height: none; width: 100%; height: 100%; }
+    #player .frame:-webkit-full-screen { aspect-ratio: auto; max-height: none; width: 100%; height: 100%; }
+    #player .frame.full { position: fixed; inset: 0; z-index: 10; aspect-ratio: auto; max-height: none; width: auto; height: auto; }
+    #player .frame .ov { display: none; position: absolute; z-index: 1; border: 0; color: #fff; background: rgba(0,0,0,.45); font-size: 22px; width: 52px; height: 52px; padding: 0; border-radius: 50%; cursor: pointer; opacity: .75; }
+    #player .frame .ov:disabled { opacity: .2; }
+    #player .frame:fullscreen .ov, #player .frame:-webkit-full-screen .ov, #player .frame.full .ov { display: block; }
+    #ovprev { left: max(16px, env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); }
+    #ovnext { right: max(16px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); }
+    #ovexit { right: max(16px, env(safe-area-inset-right)); top: max(16px, env(safe-area-inset-top)); font-size: 18px !important; }
     #player iframe { width: 100%; height: 100%; border: 0; display: block; }
     #player .bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; color: #fff; background: #000; }
-    #player .bar span { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #player .bar #nowdate { flex: none; color: #9a9aa2; font-size: 14px; white-space: nowrap; }
+    #player .bar #now { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #player button:disabled { opacity: .35; cursor: default; }
     #player button { appearance: none; border: 0; background: #2a2a2e; color: #fff; border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer; }
     main {
@@ -96,8 +107,8 @@
     <button type="button" role="tab" data-section="live">Directos</button>
   </nav>
   <section id="player" hidden>
-    <div class="frame"><div id="frame"></div></div>
-    <div class="bar"><button id="prev" type="button" aria-label="Vídeo anterior">◀</button><button id="next" type="button" aria-label="Vídeo siguiente">▶</button><span id="now"></span><button id="unmute" type="button" hidden>🔇 Activar sonido</button><button id="close" type="button">Cerrar</button></div>
+    <div class="frame" id="stage"><div id="frame"></div><button class="ov" id="ovprev" type="button" aria-label="Vídeo anterior">◀</button><button class="ov" id="ovnext" type="button" aria-label="Vídeo siguiente">▶</button><button class="ov" id="ovexit" type="button" aria-label="Salir de pantalla completa">✕</button></div>
+    <div class="bar"><button id="prev" type="button" aria-label="Vídeo anterior">◀</button><button id="next" type="button" aria-label="Vídeo siguiente">▶</button><span id="now"></span><span id="nowdate"></span><button id="unmute" type="button" hidden>🔇 Activar sonido</button><button id="fs" type="button" aria-label="Pantalla completa">⛶</button><button id="close" type="button">Cerrar</button></div>
   </section>
   <section id="suggest" hidden></section>
   <main id="grid"><p class="msg">Cargando…</p></main>
@@ -107,6 +118,7 @@
     const grid = $("grid"), player = $("player");
     const fmt = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" });
     const fmtApprox = new Intl.DateTimeFormat("es-ES", { month: "short", year: "numeric" });
+    const fmtDate = (v) => !v.published ? "" : v.approx ? fmtApprox.format(new Date(v.published)) : fmt.format(new Date(v.published));
 
     // Historial de reproducción: ◀ vuelve al anterior; ▶ avanza en el historial o, al final, pone el siguiente del canal.
     const HIST_ITEM = "history";
@@ -124,8 +136,8 @@
     }
 
     function updateArrows() {
-      $("prev").disabled = hist.pos <= 0;
-      $("next").disabled = !playing || (hist.pos >= hist.list.length - 1 && !nextInChannel(playing));
+      $("prev").disabled = $("ovprev").disabled = hist.pos <= 0;
+      $("next").disabled = $("ovnext").disabled = !playing || (hist.pos >= hist.list.length - 1 && !nextInChannel(playing));
     }
 
     function play(video, fromHistory = false) {
@@ -138,6 +150,7 @@
       playing = video;
       load(video.id);
       $("now").textContent = video.title;
+      $("nowdate").textContent = fmtDate(video);
       player.hidden = false;
       renderSuggest();
       markPlaying();
@@ -157,6 +170,23 @@
     }
 
     $("prev").addEventListener("click", () => step(-1));
+    $("ovprev").addEventListener("click", () => step(-1));
+    $("ovnext").addEventListener("click", () => step(1));
+
+    // Pantalla completa: la del navegador si existe; si no, el reproductor ocupa toda la ventana.
+    const stage = $("stage");
+    const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+    function enterFull() {
+      const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+      if (req) Promise.resolve(req.call(stage)).catch(() => stage.classList.add("full"));
+      else stage.classList.add("full");
+    }
+    function exitFull() {
+      if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      stage.classList.remove("full");
+    }
+    $("fs").addEventListener("click", enterFull);
+    $("ovexit").addEventListener("click", exitFull);
     $("next").addEventListener("click", () => step(1));
 
     // Reproductor con la IFrame API de YouTube: autoplay. Si el navegador bloquea el sonido, arranca en silencio.
@@ -185,7 +215,7 @@
         yt = new YT.Player("frame", {
           host: "https://www.youtube-nocookie.com",
           videoId: playing.id,
-          playerVars: { autoplay: 1, rel: 0, playsinline: 1, start: startOf(playing.id) },
+          playerVars: { autoplay: 1, rel: 0, playsinline: 1, fs: 0, start: startOf(playing.id) },
           events: {
             onReady: (e) => { e.target.playVideo(); checkAutoplay(); },
             onStateChange: (e) => { if (e.data === 0 || e.data === 2) record(); },
@@ -288,8 +318,9 @@
     function renderSuggest() {
       const box = $("suggest");
       box.replaceChildren();
-      for (const [id, name] of Object.entries(data.channels || {})) {
-        const list = shuffle((data.videos || []).filter((v) => v.channelId === id && v.id !== playing?.id)).slice(0, SUGGEST_PER_CHANNEL);
+      const rows = Object.entries(data.channels || {}).flatMap(([id, name]) => [[id, name, false], [id, `${name} - Directos`, true]]);
+      for (const [id, name, live] of rows) {
+        const list = shuffle((data.videos || []).filter((v) => v.channelId === id && (v.kind === "live") === live && v.id !== playing?.id)).slice(0, SUGGEST_PER_CHANNEL);
         if (!list.length) continue;
         const h = document.createElement("h2");
         h.textContent = name;
@@ -304,6 +335,7 @@
     }
 
     $("close").addEventListener("click", () => {
+      exitFull();
       record();
       push();
       yt?.stopVideo();
@@ -315,28 +347,29 @@
     });
 
     let data = { videos: [] };
-    let current = (() => { try { return localStorage.getItem("channel"); } catch { return null; } })();
+    // "home" = Inicio (elegir canal). Al abrir la web se empieza siempre en Inicio.
+    const HOME = "home";
+    let current = HOME;
+    function openChannel(id) {
+      current = id;
+      renderTabs();
+      renderGrid();
+      window.scrollTo({ top: 0 });
+    }
 
     function renderTabs() {
       const names = data.channels || {};
       const ids = Object.keys(names);
-      if (!ids.includes(current)) current = ids[0] || null;
+      if (current !== HOME && !ids.includes(current)) current = HOME;
       const tabs = $("tabs");
       tabs.replaceChildren();
-      if (ids.length < 2) return;
-      for (const id of ids) {
+      for (const id of [HOME, ...ids]) {
         const b = document.createElement("button");
         b.type = "button";
         b.role = "tab";
-        b.textContent = names[id];
+        b.textContent = id === HOME ? "Inicio" : names[id];
         b.setAttribute("aria-selected", id === current);
-        b.addEventListener("click", () => {
-          current = id;
-          try { localStorage.setItem("channel", id); } catch {}
-          renderTabs();
-          renderGrid();
-          window.scrollTo({ top: 0 });
-        });
+        b.addEventListener("click", () => openChannel(id));
         tabs.append(b);
       }
     }
@@ -381,7 +414,7 @@
       t.textContent = v.title;
       const d = document.createElement("span");
       d.className = "date";
-      d.textContent = !v.published ? "" : v.approx ? fmtApprox.format(new Date(v.published)) : fmt.format(new Date(v.published));
+      d.textContent = fmtDate(v);
       info.append(t, d);
       card.append(wrap, info);
       setBar(card, prog[v.id]);
@@ -389,11 +422,47 @@
       return card;
     }
 
+    // Inicio: una tarjeta por canal (miniatura de su último vídeo) para entrar en él.
+    function renderHome() {
+      const names = data.channels || {};
+      $("title").textContent = document.title = data.title || "Mis canales";
+      $("sections").hidden = true;
+      const ids = Object.keys(names);
+      $("count").textContent = `${ids.length} canales`;
+      grid.replaceChildren(...ids.map((id) => {
+        const list = (data.videos || []).filter((v) => v.channelId === id);
+        const latest = list.reduce((a, v) => (!a || v.published > a.published ? v : a), null);
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "card";
+        const wrap = document.createElement("div");
+        wrap.className = "thumbwrap";
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.alt = "";
+        if (latest) img.src = `https://i.ytimg.com/vi/${latest.id}/hqdefault.jpg`;
+        wrap.append(img);
+        const info = document.createElement("div");
+        info.className = "info";
+        const t = document.createElement("span");
+        t.className = "title";
+        t.textContent = names[id];
+        const d = document.createElement("span");
+        d.className = "date";
+        d.textContent = `${list.length} vídeos${latest ? " · último: " + fmtDate(latest) : ""}`;
+        info.append(t, d);
+        card.append(wrap, info);
+        card.addEventListener("click", () => openChannel(id));
+        return card;
+      }));
+    }
+
     function renderGrid() {
+      if (current === HOME) return renderHome();
       const title = data.channels?.[current] || data.title || "Mis canales";
       $("title").textContent = title;
       document.title = title;
-      const ofChannel = (data.videos || []).filter((v) => !current || v.channelId === current);
+      const ofChannel = (data.videos || []).filter((v) => v.channelId === current).sort((a, b) => b.published.localeCompare(a.published));
       const hasLives = ofChannel.some((v) => v.kind === "live");
       if (!hasLives) section = "video";
       $("sections").hidden = !hasLives;
