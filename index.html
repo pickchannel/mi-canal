@@ -69,12 +69,23 @@
       padding: 8px 16px; border-radius: 999px; background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--ring);
     }
     #tabs button[aria-selected="true"] { background: var(--text); color: var(--bg); }
+    #sections { display: inline-flex; margin: 12px var(--gap) 0; padding: 3px; border-radius: 999px; background: var(--card); box-shadow: 0 0 0 1px var(--ring); }
+    #sections[hidden] { display: none; }
+    #sections button {
+      appearance: none; border: 0; cursor: pointer; font: inherit; font-size: 14px; font-weight: 600;
+      padding: 6px 16px; border-radius: 999px; background: transparent; color: var(--muted);
+    }
+    #sections button[aria-selected="true"] { background: var(--text); color: var(--bg); }
     .msg { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 48px 0; }
   </style>
 </head>
 <body>
   <header><h1 id="title">Mis canales</h1><span id="count"></span></header>
   <nav id="tabs" role="tablist"></nav>
+  <nav id="sections" role="tablist" hidden>
+    <button type="button" role="tab" data-section="video">Vídeos</button>
+    <button type="button" role="tab" data-section="live">Directos</button>
+  </nav>
   <section id="player" hidden>
     <div class="frame"><iframe id="frame" title="Reproductor" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
     <div class="bar"><span id="now"></span><button id="close" type="button">Cerrar</button></div>
@@ -135,12 +146,24 @@
       renderGrid();
     }
 
+    let section = "video";
+    document.querySelectorAll("#sections button").forEach((b) => b.addEventListener("click", () => {
+      section = b.dataset.section;
+      renderGrid();
+      window.scrollTo({ top: 0 });
+    }));
+
     function renderGrid() {
       const title = data.channels?.[current] || data.title || "Mis canales";
       $("title").textContent = title;
       document.title = title;
-      const videos = (data.videos || []).filter((v) => !current || v.channelId === current);
-      $("count").textContent = videos.length ? `${videos.length} vídeos` : "";
+      const ofChannel = (data.videos || []).filter((v) => !current || v.channelId === current);
+      const hasLives = ofChannel.some((v) => v.kind === "live");
+      if (!hasLives) section = "video";
+      $("sections").hidden = !hasLives;
+      document.querySelectorAll("#sections button").forEach((b) => b.setAttribute("aria-selected", b.dataset.section === section));
+      const videos = ofChannel.filter((v) => (v.kind === "live") === (section === "live"));
+      $("count").textContent = videos.length ? `${videos.length} ${section === "live" ? "directos" : "vídeos"}` : "";
       grid.replaceChildren();
       if (!videos.length) {
         grid.innerHTML = '<p class="msg">Todavía no hay vídeos.</p>';
