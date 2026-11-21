@@ -1,0 +1,4 @@
+# Never commit plaintext: channel list and passphrase live in GitHub secrets (CHANNELS, VIDEOS_KEY)
+channels.json
+videos.json
+.videos-key

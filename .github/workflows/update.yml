@@ -1,0 +1,49 @@
+name: Update videos
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-videos
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Update videos.enc.json and push if changed
+        env:
+          CHANNELS: ${{ secrets.CHANNELS }}
+          VIDEOS_KEY: ${{ secrets.VIDEOS_KEY }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            node scripts/fetch-feed.mjs
+            if git diff --quiet -- videos.enc.json; then
+              echo "No changes"
+              exit 0
+            fi
+            git add videos.enc.json
+            git commit -m "Update videos"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push rejected, retrying ($attempt)"
+          done
+          exit 1
