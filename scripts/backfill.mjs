@@ -3,6 +3,7 @@
 // Logs never print channel ids or names.
 import { loadConfig, loadKey, readVideos, writeVideos } from "./store.mjs";
 import { listPlaylist, videosPlaylist, livesPlaylist } from "./playlist.mjs";
+import { fixApproxDates } from "./dates.mjs";
 
 const config = await loadConfig();
 const key = await loadKey();
@@ -52,6 +53,7 @@ if (all.size === 0) {
   process.exit(1);
 }
 
+await fixApproxDates([...all.values()]);
 const videos = [...all.values()].sort((a, b) => b.published.localeCompare(a.published));
 const channels = Object.fromEntries(config.channels.map((id) => [id, previous.channels?.[id] ?? id]));
 const nApprox = videos.filter((v) => v.approx).length;

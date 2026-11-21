@@ -2,6 +2,7 @@
 // Logs never print channel ids or names: GitHub Actions logs of a public repo are public.
 import { loadConfig, loadKey, readVideos, writeVideos } from "./store.mjs";
 import { listPlaylist, videosPlaylist, livesPlaylist } from "./playlist.mjs";
+import { fixApproxDates } from "./dates.mjs";
 
 const decode = (s) =>
   s
@@ -97,6 +98,10 @@ if (ok === 0) {
   console.error("No se pudo leer ningún feed; no se toca videos.enc.json");
   process.exit(1);
 }
+
+// Approximate dates (from backfill): fix a batch per run with the exact date of the watch page.
+const nFixed = await fixApproxDates([...byId.values()], { limit: 200 });
+if (nFixed) console.log(`${nFixed} fechas aproximadas corregidas`);
 
 const videos = [...byId.values()].sort((a, b) => b.published.localeCompare(a.published));
 const prevSerialized = JSON.stringify({ title: previous.title, channels: previous.channels, videos: previous.videos ?? [] });
