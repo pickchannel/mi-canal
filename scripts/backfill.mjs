@@ -40,7 +40,7 @@ function add(items, channelId, kind) {
 
 for (const [i, channelId] of config.channels.entries()) {
   const label = `canal ${i + 1}`;
-  const videos = await listPlaylist(videosPlaylist(channelId));
+  const videos = config.livesOnly.includes(channelId) ? [] : await listPlaylist(videosPlaylist(channelId));
   // Lives: only finished ones (they carry a duration badge); in progress or scheduled are skipped.
   const lives = (await listPlaylist(livesPlaylist(channelId))).filter((v) => v.duration);
   add(videos, channelId, "video");

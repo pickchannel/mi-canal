@@ -54,8 +54,9 @@ const config = await loadConfig();
 const key = await loadKey();
 const previous = await readVideos(key);
 
-// Drop videos of channels no longer in the list
-const byId = new Map((previous.videos ?? []).filter((v) => config.channels.includes(v.channelId)).map((v) => [v.id, v]));
+// Drop videos of channels no longer in the list, and normal videos of lives-only channels
+const keep = (v) => config.channels.includes(v.channelId) && (v.kind === "live" || !config.livesOnly.includes(v.channelId));
+const byId = new Map((previous.videos ?? []).filter(keep).map((v) => [v.id, v]));
 const names = {};
 for (const id of config.channels) names[id] = previous.channels?.[id] ?? id;
 
@@ -63,15 +64,19 @@ let ok = 0;
 for (const [i, channelId] of config.channels.entries()) {
   const label = `canal ${i + 1}`;
   try {
-    const xml = await fetchFeed(videosPlaylist(channelId), label);
-    const author = tag(xml.match(/<author>[\s\S]*?<\/author>/)?.[0] ?? "", "name");
-    if (author) names[channelId] = author;
-    const videos = parseFeed(xml, channelId);
-    for (const v of videos) byId.set(v.id, { ...byId.get(v.id), ...v, approx: undefined });
+    const author = (xml) => tag(xml?.match(/<author>[\s\S]*?<\/author>/)?.[0] ?? "", "name");
+    let videos = [];
+    if (!config.livesOnly.includes(channelId)) {
+      const xml = await fetchFeed(videosPlaylist(channelId), label);
+      if (author(xml)) names[channelId] = author(xml);
+      videos = parseFeed(xml, channelId);
+      for (const v of videos) byId.set(v.id, { ...byId.get(v.id), ...v, approx: undefined });
+    }
 
     // Lives: only finished ones. A new live is added once the playlist page shows its duration
     // (in progress or scheduled lives have none); until then it is retried on the next run.
     const livesXml = await fetchFeed(livesPlaylist(channelId), label);
+    if (author(livesXml)) names[channelId] = author(livesXml);
     const lives = livesXml ? parseFeed(livesXml, channelId) : [];
     const fresh = lives.filter((v) => byId.get(v.id)?.kind !== "live");
     let finished = new Set();

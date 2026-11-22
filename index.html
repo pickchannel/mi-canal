@@ -48,6 +48,15 @@
     #player .frame .ov { display: none; position: absolute; z-index: 1; border: 0; color: #fff; background: rgba(0,0,0,.45); font-size: 22px; width: 52px; height: 52px; padding: 0; border-radius: 50%; cursor: pointer; opacity: .75; }
     #player .frame .ov:disabled { opacity: .2; }
     #player .frame:fullscreen .ov, #player .frame:-webkit-full-screen .ov, #player .frame.full .ov { display: block; }
+    /* En pantalla completa ◀ ▶ solo aparecen al tocar el reproductor: #tap recoge ese toque y luego se quita
+       para que los siguientes toques lleguen a YouTube. */
+    #tap { display: none; position: absolute; inset: 0; z-index: 1; }
+    #player .frame:fullscreen #tap, #player .frame:-webkit-full-screen #tap, #player .frame.full #tap { display: block; }
+    #player .frame.show #tap { display: none; }
+    #ovprev, #ovnext { z-index: 2 !important; visibility: hidden; opacity: 0 !important; transition: opacity .2s, visibility .2s; }
+    #player .frame.show #ovprev, #player .frame.show #ovnext { visibility: visible; opacity: .75 !important; }
+    #player .frame.show #ovprev:disabled, #player .frame.show #ovnext:disabled { opacity: .2 !important; }
+    #ovexit { z-index: 2 !important; }
     #ovprev { left: max(16px, env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); }
     #ovnext { right: max(16px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); }
     #ovexit { right: max(16px, env(safe-area-inset-right)); top: max(16px, env(safe-area-inset-top)); font-size: 18px !important; }
@@ -73,11 +82,13 @@
     .prog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.35); }
     .prog span { display: block; height: 100%; background: #f00; }
     .badge { position: absolute; left: 8px; bottom: 10px; background: #cc0000; color: #fff; font-size: 12px; font-weight: 700; letter-spacing: .03em; padding: 2px 7px; border-radius: 4px; }
-    #suggest { padding: 0 var(--gap); display: flex; flex-direction: column; gap: 18px; }
-    #suggest[hidden] { display: none; }
-    #suggest h2 { font-size: 18px; margin: 0 0 8px; letter-spacing: -.01em; }
-    #suggest .row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 260px); gap: 12px; overflow-x: auto; padding: 3px 3px 6px; scrollbar-width: none; scroll-snap-type: x proximity; }
-    #suggest .row .card { scroll-snap-align: start; }
+    .rows { padding: 0 var(--gap); display: flex; flex-direction: column; gap: 18px; }
+    .rows[hidden] { display: none; }
+    #homerows { padding-top: var(--gap); }
+    .rows h2 { font-size: 18px; margin: 0 0 8px; letter-spacing: -.01em; }
+    .rows .row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 260px); gap: 12px; overflow-x: auto; padding: 3px 3px 6px; scrollbar-width: none; scroll-snap-type: x proximity; }
+    .rows .row .card { scroll-snap-align: start; }
+    #homerows h2.channels { margin-bottom: 0; }
     .thumb { aspect-ratio: 16 / 9; width: 100%; object-fit: cover; display: block; background: var(--ring); }
     .info { padding: 10px 12px 14px; display: flex; flex-direction: column; gap: 4px; }
     .title { font-weight: 600; font-size: 15px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -107,10 +118,11 @@
     <button type="button" role="tab" data-section="live">Directos</button>
   </nav>
   <section id="player" hidden>
-    <div class="frame" id="stage"><div id="frame"></div><button class="ov" id="ovprev" type="button" aria-label="Vídeo anterior">◀</button><button class="ov" id="ovnext" type="button" aria-label="Vídeo siguiente">▶</button><button class="ov" id="ovexit" type="button" aria-label="Salir de pantalla completa">✕</button></div>
+    <div class="frame" id="stage"><div id="frame"></div><div id="tap"></div><button class="ov" id="ovprev" type="button" aria-label="Vídeo anterior">◀</button><button class="ov" id="ovnext" type="button" aria-label="Vídeo siguiente">▶</button><button class="ov" id="ovexit" type="button" aria-label="Salir de pantalla completa">✕</button></div>
     <div class="bar"><button id="prev" type="button" aria-label="Vídeo anterior">◀</button><button id="next" type="button" aria-label="Vídeo siguiente">▶</button><span id="now"></span><span id="nowdate"></span><button id="unmute" type="button" hidden>🔇 Activar sonido</button><button id="fs" type="button" aria-label="Pantalla completa">⛶</button><button id="close" type="button">Cerrar</button></div>
   </section>
-  <section id="suggest" hidden></section>
+  <section id="suggest" class="rows" hidden></section>
+  <section id="homerows" class="rows" hidden></section>
   <main id="grid"><p class="msg">Cargando…</p></main>
 
   <script>
@@ -170,8 +182,20 @@
     }
 
     $("prev").addEventListener("click", () => step(-1));
-    $("ovprev").addEventListener("click", () => step(-1));
-    $("ovnext").addEventListener("click", () => step(1));
+    $("ovprev").addEventListener("click", () => { showArrows(); step(-1); });
+    $("ovnext").addEventListener("click", () => { showArrows(); step(1); });
+
+    // Flechas en pantalla completa: aparecen al tocar el vídeo y se ocultan a los 3 s.
+    let arrowsTimer = null;
+    function showArrows() {
+      $("stage").classList.add("show");
+      clearTimeout(arrowsTimer);
+      arrowsTimer = setTimeout(hideArrows, 3000);
+    }
+    function hideArrows() { clearTimeout(arrowsTimer); $("stage").classList.remove("show"); }
+    $("tap").addEventListener("click", showArrows);
+    document.addEventListener("fullscreenchange", hideArrows);
+    document.addEventListener("webkitfullscreenchange", hideArrows);
 
     // Pantalla completa: la del navegador si existe; si no, el reproductor ocupa toda la ventana.
     const stage = $("stage");
@@ -184,6 +208,7 @@
     function exitFull() {
       if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       stage.classList.remove("full");
+      hideArrows();
     }
     $("fs").addEventListener("click", enterFull);
     $("ovexit").addEventListener("click", exitFull);
@@ -287,7 +312,7 @@
         let changed = false;
         for (const [id, p] of Object.entries(remote)) if (!prog[id] || p.at > prog[id].at) { prog[id] = p; changed = true; }
         for (const [id, p] of Object.entries(prog)) if (!remote[id] || p.at > remote[id].at) dirty = true;
-        if (changed) { saveProg(); updateBars(); }
+        if (changed) { saveProg(); updateBars(); if (current === HOME) renderHomeRows(); }
       } catch {}
     }
 
@@ -315,23 +340,46 @@
       for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
       return a;
     }
+    function makeRow(name, list) {
+      const h = document.createElement("h2");
+      h.textContent = name;
+      const row = document.createElement("div");
+      row.className = "row";
+      row.append(...list.map(makeCard));
+      const sec = document.createElement("div");
+      sec.append(h, row);
+      return sec;
+    }
     function renderSuggest() {
       const box = $("suggest");
       box.replaceChildren();
       const rows = Object.entries(data.channels || {}).flatMap(([id, name]) => [[id, name, false], [id, `${name} - Directos`, true]]);
       for (const [id, name, live] of rows) {
         const list = shuffle((data.videos || []).filter((v) => v.channelId === id && (v.kind === "live") === live && v.id !== playing?.id)).slice(0, SUGGEST_PER_CHANNEL);
-        if (!list.length) continue;
-        const h = document.createElement("h2");
-        h.textContent = name;
-        const row = document.createElement("div");
-        row.className = "row";
-        row.append(...list.map(makeCard));
-        const sec = document.createElement("div");
-        sec.append(h, row);
-        box.append(sec);
+        if (list.length) box.append(makeRow(name, list));
       }
       box.hidden = false;
+    }
+
+    // Inicio: "Seguir viendo" (empezados y sin terminar) e "Historial" (todo lo visto), lo más reciente primero.
+    const HISTORY_MAX = 100;
+    function renderHomeRows() {
+      const box = $("homerows");
+      box.replaceChildren();
+      if (current !== HOME) { box.hidden = true; return; }
+      const seen = Object.entries(prog).sort((a, b) => b[1].at - a[1].at)
+        .map(([id, p]) => [byId(id), p]).filter(([v]) => v);
+      const resume = seen.filter(([, p]) => !p.done && p.t > 5).map(([v]) => v);
+      const history = seen.slice(0, HISTORY_MAX).map(([v]) => v);
+      if (resume.length) box.append(makeRow("Seguir viendo", resume));
+      if (history.length) box.append(makeRow("Historial", history));
+      if (box.children.length) {
+        const h = document.createElement("h2");
+        h.className = "channels";
+        h.textContent = "Canales";
+        box.append(h);
+      }
+      box.hidden = !box.children.length;
     }
 
     $("close").addEventListener("click", () => {
@@ -344,6 +392,7 @@
       player.hidden = true;
       playing = null;
       markPlaying();
+      if (current === HOME) renderHomeRows();
     });
 
     let data = { videos: [] };
@@ -458,6 +507,7 @@
     }
 
     function renderGrid() {
+      renderHomeRows();
       if (current === HOME) return renderHome();
       const title = data.channels?.[current] || data.title || "Mis canales";
       $("title").textContent = title;

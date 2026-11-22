@@ -22,7 +22,8 @@ export async function loadConfig() {
   const parsed = JSON.parse(raw);
   const config = Array.isArray(parsed) ? { channels: parsed } : parsed;
   if (!config.channels?.length) throw new Error("La lista de canales está vacía");
-  return { title: config.title || "Mis canales", channels: config.channels };
+  // livesOnly: channels whose normal videos are skipped (only finished lives are kept).
+  return { title: config.title || "Mis canales", channels: config.channels, livesOnly: config.livesOnly ?? [] };
 }
 
 export async function loadKey() {
