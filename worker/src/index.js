@@ -1,5 +1,6 @@
 // Stores one encrypted blob (watch progress) per user. The blob is encrypted in the browser with the
 // videos passphrase, so this worker never sees which videos are watched. Key = SHA-256 derived from the passphrase.
+// GET /time returns the current server time.
 const ORIGINS = ["https://pickchannel.github.io", "http://localhost:3006"];
 const MAX_BYTES = 512 * 1024;
 
@@ -16,6 +17,10 @@ export default {
     const reply = (body, status = 200, extra = {}) => new Response(body, { status, headers: { ...cors, ...extra } });
 
     if (req.method === "OPTIONS") return reply(null, 204);
+    // Server time, so the web does not depend on the device clock (channel schedules).
+    if (req.method === "GET" && new URL(req.url).pathname === "/time") {
+      return reply(JSON.stringify({ now: Date.now() }), 200, { "content-type": "application/json", "cache-control": "no-store" });
+    }
     const id = new URL(req.url).pathname.match(/^\/p\/([0-9a-f]{64})$/)?.[1];
     if (!id) return reply("Not found", 404);
 

@@ -22,8 +22,9 @@ export async function loadConfig() {
   const parsed = JSON.parse(raw);
   const config = Array.isArray(parsed) ? { channels: parsed } : parsed;
   if (!config.channels?.length) throw new Error("La lista de canales está vacía");
+  // schedule: { channelId: [["22:00", "07:00"], …] } = hours (Madrid) when a channel can be watched.
   // livesOnly: channels whose normal videos are skipped (only finished lives are kept).
-  return { title: config.title || "Mis canales", channels: config.channels, livesOnly: config.livesOnly ?? [] };
+  return { title: config.title || "Mis canales", channels: config.channels, livesOnly: config.livesOnly ?? [], schedule: config.schedule ?? {} };
 }
 
 export async function loadKey() {

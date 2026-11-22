@@ -57,5 +57,5 @@ await fixApproxDates([...all.values()]);
 const videos = [...all.values()].sort((a, b) => b.published.localeCompare(a.published));
 const channels = Object.fromEntries(config.channels.map((id) => [id, previous.channels?.[id] ?? id]));
 const nApprox = videos.filter((v) => v.approx).length;
-await writeVideos(key, { title: config.title, updated: new Date().toISOString(), channels, videos });
+await writeVideos(key, { title: config.title, updated: new Date().toISOString(), channels, schedule: config.schedule, videos });
 console.log(`videos.enc.json: ${videos.length} (${nApprox} con fecha aproximada)`);

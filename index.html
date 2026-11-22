@@ -107,6 +107,7 @@
       padding: 6px 16px; border-radius: 999px; background: transparent; color: var(--muted);
     }
     #sections button[aria-selected="true"] { background: var(--text); color: var(--bg); }
+    .lock { position: absolute; inset: 0; display: grid; place-items: center; font-size: 40px; background: rgba(0,0,0,.55); }
     .msg { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 48px 0; }
   </style>
 </head>
@@ -139,6 +140,7 @@
     const saveHist = () => { try { localStorage.setItem(HIST_ITEM, JSON.stringify(hist)); } catch {} };
     const byId = (id) => (data.videos || []).find((v) => v.id === id);
     const nextInChannel = (video) => {
+      if (!isOpen(video.channelId)) return null;
       const list = (data.videos || []).filter((v) => v.channelId === video.channelId && v.kind === video.kind);
       return list[list.indexOf(video) + 1] || null;
     };
@@ -153,6 +155,7 @@
     }
 
     function play(video, fromHistory = false) {
+      if (!isOpen(video.channelId)) return;
       record();
       if (!fromHistory && hist.list[hist.pos] !== video.id) {
         hist.list = hist.list.slice(0, hist.pos + 1).concat(video.id).slice(-200);
@@ -173,7 +176,7 @@
     function step(dir) {
       for (let p = hist.pos + dir; p >= 0 && p < hist.list.length; p += dir) {
         const v = byId(hist.list[p]);
-        if (v) { hist.pos = p; saveHist(); return play(v, true); }
+        if (v && isOpen(v.channelId)) { hist.pos = p; saveHist(); return play(v, true); }
       }
       if (dir > 0 && playing) {
         const v = nextInChannel(playing);
@@ -334,6 +337,56 @@
 
     $("unmute").addEventListener("click", () => { yt?.unMute(); $("unmute").hidden = true; });
 
+    // Horarios: algunos canales solo se pueden ver a ciertas horas (data.schedule, hora de Madrid).
+    // La hora sale del Worker, no del reloj del dispositivo; performance.now() avanza aunque se cambie la hora.
+    // Sin hora del servidor, los canales con horario quedan bloqueados.
+    let serverAt = null, perfAt = 0;
+    async function syncTime() {
+      try {
+        const t0 = performance.now();
+        const r = await fetch(`${SYNC_URL}/time`, { cache: "no-store" });
+        const { now } = await r.json();
+        const t1 = performance.now();
+        if (!Number.isFinite(now)) throw 0;
+        serverAt = now + (t1 - t0) / 2;
+        perfAt = t1;
+      } catch {}
+      checkLocks();
+    }
+    const serverNow = () => serverAt === null ? null : serverAt + (performance.now() - perfAt);
+    const madridParts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    const toMin = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return h * 60 + m; };
+    function madridMinutes() {
+      const now = serverNow();
+      if (now === null) return null;
+      const p = Object.fromEntries(madridParts.formatToParts(new Date(now)).map((x) => [x.type, x.value]));
+      return (+p.hour % 24) * 60 + +p.minute;
+    }
+    const inWindow = (m, [a, b]) => { a = toMin(a); b = toMin(b); return a <= b ? m >= a && m < b : m >= a || m < b; };
+    function isOpen(channelId) {
+      const windows = data.schedule?.[channelId];
+      if (!windows?.length) return true;
+      const m = madridMinutes();
+      return m !== null && windows.some((w) => inWindow(m, w));
+    }
+    const scheduleText = (channelId) => (data.schedule?.[channelId] || []).map(([a, b]) => `de ${a} a ${b}`).join(" y ");
+
+    // Cada 20 s: si un canal se abre o se cierra, se vuelve a pintar; si se cierra el que se está viendo, fuera.
+    let lockState = "";
+    function checkLocks() {
+      const state = Object.keys(data.channels || {}).map((id) => +isOpen(id)).join("");
+      if (state === lockState) return;
+      lockState = state;
+      if (playing && !isOpen(playing.channelId)) closePlayer();
+      if (current !== HOME && !isOpen(current)) current = HOME;
+      renderTabs();
+      renderGrid();
+      if (playing) renderSuggest();
+    }
+    setInterval(checkLocks, 20000);
+    setInterval(syncTime, 600000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) syncTime(); });
+
     // Sugeridos: todos los canales, uno debajo de otro, con sus vídeos y directos en orden aleatorio.
     const SUGGEST_PER_CHANNEL = 20;
     function shuffle(a) {
@@ -353,7 +406,7 @@
     function renderSuggest() {
       const box = $("suggest");
       box.replaceChildren();
-      const rows = Object.entries(data.channels || {}).flatMap(([id, name]) => [[id, name, false], [id, `${name} - Directos`, true]]);
+      const rows = Object.entries(data.channels || {}).filter(([id]) => isOpen(id)).flatMap(([id, name]) => [[id, name, false], [id, `${name} - Directos`, true]]);
       for (const [id, name, live] of rows) {
         const list = shuffle((data.videos || []).filter((v) => v.channelId === id && (v.kind === "live") === live && v.id !== playing?.id)).slice(0, SUGGEST_PER_CHANNEL);
         if (list.length) box.append(makeRow(name, list));
@@ -368,7 +421,7 @@
       box.replaceChildren();
       if (current !== HOME) { box.hidden = true; return; }
       const seen = Object.entries(prog).sort((a, b) => b[1].at - a[1].at)
-        .map(([id, p]) => [byId(id), p]).filter(([v]) => v);
+        .map(([id, p]) => [byId(id), p]).filter(([v]) => v && isOpen(v.channelId));
       const resume = seen.filter(([, p]) => !p.done && p.t > 5).map(([v]) => v);
       const history = seen.slice(0, HISTORY_MAX).map(([v]) => v);
       if (resume.length) box.append(makeRow("Seguir viendo", resume));
@@ -382,7 +435,8 @@
       box.hidden = !box.children.length;
     }
 
-    $("close").addEventListener("click", () => {
+    $("close").addEventListener("click", () => closePlayer());
+    function closePlayer() {
       exitFull();
       record();
       push();
@@ -393,7 +447,7 @@
       playing = null;
       markPlaying();
       if (current === HOME) renderHomeRows();
-    });
+    }
 
     let data = { videos: [] };
     // "home" = Inicio (elegir canal). Al abrir la web se empieza siempre en Inicio.
@@ -416,7 +470,7 @@
         const b = document.createElement("button");
         b.type = "button";
         b.role = "tab";
-        b.textContent = id === HOME ? "Inicio" : names[id];
+        b.textContent = id === HOME ? "Inicio" : (isOpen(id) ? "" : "🔒 ") + names[id];
         b.setAttribute("aria-selected", id === current);
         b.addEventListener("click", () => openChannel(id));
         tabs.append(b);
@@ -491,6 +545,8 @@
         img.alt = "";
         if (latest) img.src = `https://i.ytimg.com/vi/${latest.id}/hqdefault.jpg`;
         wrap.append(img);
+        const open = isOpen(id);
+        if (!open) { const l = document.createElement("span"); l.className = "lock"; l.textContent = "🔒"; wrap.append(l); }
         const info = document.createElement("div");
         info.className = "info";
         const t = document.createElement("span");
@@ -498,7 +554,7 @@
         t.textContent = names[id];
         const d = document.createElement("span");
         d.className = "date";
-        d.textContent = `${list.length} vídeos${latest ? " · último: " + fmtDate(latest) : ""}`;
+        d.textContent = open ? `${list.length} vídeos${latest ? " · último: " + fmtDate(latest) : ""}` : `Solo ${scheduleText(id)}`;
         info.append(t, d);
         card.append(wrap, info);
         card.addEventListener("click", () => openChannel(id));
@@ -512,6 +568,13 @@
       const title = data.channels?.[current] || data.title || "Mis canales";
       $("title").textContent = title;
       document.title = title;
+      if (!isOpen(current)) {
+        $("sections").hidden = true;
+        $("count").textContent = "";
+        grid.innerHTML = '<p class="msg"></p>';
+        grid.firstChild.textContent = `🔒 Este canal solo se puede ver ${scheduleText(current)}.`;
+        return;
+      }
       const ofChannel = (data.videos || []).filter((v) => v.channelId === current).sort((a, b) => b.published.localeCompare(a.published));
       const hasLives = ofChannel.some((v) => v.kind === "live");
       if (!hasLives) section = "video";
@@ -566,6 +629,7 @@
         const json = await decrypt(enc, passphrase);
         setSaved(passphrase);
         render(json);
+        syncTime();
         initSync(passphrase);
       } catch {
         setSaved(null);

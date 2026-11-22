@@ -109,12 +109,12 @@ const nFixed = await fixApproxDates([...byId.values()], { limit: 200 });
 if (nFixed) console.log(`${nFixed} fechas aproximadas corregidas`);
 
 const videos = [...byId.values()].sort((a, b) => b.published.localeCompare(a.published));
-const prevSerialized = JSON.stringify({ title: previous.title, channels: previous.channels, videos: previous.videos ?? [] });
-const nextSerialized = JSON.stringify({ title: config.title, channels: names, videos });
+const prevSerialized = JSON.stringify({ title: previous.title, channels: previous.channels, schedule: previous.schedule ?? {}, videos: previous.videos ?? [] });
+const nextSerialized = JSON.stringify({ title: config.title, channels: names, schedule: config.schedule, videos });
 
 if (prevSerialized === nextSerialized) {
   console.log("Sin cambios");
 } else {
-  await writeVideos(key, { title: config.title, updated: new Date().toISOString(), channels: names, videos });
+  await writeVideos(key, { title: config.title, updated: new Date().toISOString(), channels: names, schedule: config.schedule, videos });
   console.log(`videos.enc.json: ${videos.length} vídeos`);
 }
